@@ -1,0 +1,25 @@
+[package]
+name = "dedns"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.94"
+base64 = "0.22.1"
+borsh = { version = "1.5.3", features = ["derive"] }
+dns-server = "0.2.4"
+dotenv = "0.15.0"
+futures-util = "0.3.31"
+log = "0.4.22"
+permit = "0.2.1"
+serde = { version="1.0.216", features=["derive"] }
+serde_json = "1.0.133"
+signal-hook = "0.3.17"
+solana-program = "2.1.6"
+solana-pubkey = "2.1.6"
+tokio = { version = "1.42.0", features = ["full"] }
+tokio-tungstenite = {version = "0.25.0", features = ["native-tls"]}
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
+tungstenite = "0.25.0"
+vdf = "0.1.0"
