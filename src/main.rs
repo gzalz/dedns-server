@@ -17,30 +17,25 @@ fn ascii_art() -> Result<()> {
 }
 async fn bootstrap() -> Result<()> {
     let _ = ascii_art();
-    let (dns_shutdown_tx, dns_shutdown_rx) = watch::channel(());
-    let (solana_shutdown_tx, solana_shutdown_rx) = watch::channel(());
-    //let (uptimeproof_shutdown_tx, uptimeproof_shutdown_rx) = watch::channel(());
 
     dedns::config::init()?;
 
     tokio::spawn(async move {
-        _ = dedns::dns_service::start(Arc::new(dns_shutdown_rx)).await;
+        _ = dedns::dns_service::start().await;
     });
 
     tokio::spawn(async move {
-        _ = dedns::solana_service::subscribe(Arc::new(Mutex::new(solana_shutdown_rx))).await;
+        _ = dedns::solana_service::subscribe().await;
+    });
+
+    tokio::spawn(async move {
+        _ = dedns::record_index_service::start().await;
     });
     
-    /*tokio::spawn(async move {
-        _ = dedns::proofofuptime::start(Arc::new(uptimeproof_shutdown_rx)).await;
-    });*/
-
     tokio::select! {
         _ = signal::ctrl_c() => {
             info!("Received Ctrl+C, initiating shutdown...");
-            let _ = dns_shutdown_tx.send(());
-            let _ = solana_shutdown_tx.send(());
-            //let _ = uptimeproof_shutdown_tx.send(());
+            std::process::exit(0);
         }
     }
     Ok(())
@@ -48,7 +43,6 @@ async fn bootstrap() -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // if RUST_LOG is not set, set it to info
     if std::env::var("RUST_LOG").is_err() {
         unsafe { std::env::set_var("RUST_LOG", "info"); }
     }

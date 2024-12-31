@@ -1,4 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
+use crate::channels::{SOLANA_TO_DNS, SOLANA_TO_DB};
+use crate::models::*;
 use serde::Deserialize;
 use futures_util::{future, pin_mut};
 use futures_util::{SinkExt, StreamExt};
@@ -9,53 +11,11 @@ use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use solana_program::pubkey::Pubkey;
 use std::sync::Arc;
+use tungstenite::protocol::frame::Payload::Vec as FrameVec;
 
-const RPC_URL: &str = "wss://api.devnet.solana.com";
+const RPC_URL: &str = "wss://devnet.helius-rpc.com/?api-key=32051878-0678-4d69-ba30-9a0370d30f7a";
 
-#[derive(Deserialize)]
-struct Payload {
-    params: Params,
-}
-
-#[derive(Deserialize)]
-struct Params {
-    result: ResultField,
-}
-
-#[derive(Deserialize)]
-struct ResultField {
-    value: ValueField,
-}
-
-#[derive(Deserialize)]
-struct ValueField {
-    account: Account,
-}
-
-#[derive(Deserialize)]
-struct Account {
-    data: Vec<String>,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, Debug)]
-pub struct Zone {
-    owner: Pubkey,
-    lamports_per_second: i64,
-    min_lease_duration_secs: i64,
-    domain: String,
-    subdivided: bool,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, Debug)]
-pub struct Lease {
-    zone_account: Pubkey,
-    owner: Pubkey,
-    domain: String,
-    expiration: i64,
-    expired: bool,
-}
-
-pub async fn subscribe(shutdown_rx: Arc<Mutex<Receiver<()>>>) {
+pub async fn subscribe() {
     info!("Subscribing to RPC websocket...");
     let (mut ws_stream, _) = connect_async(RPC_URL).await.expect("Failed to connect");
     info!("WebSocket handshake has been successfully completed");
@@ -66,7 +26,7 @@ pub async fn subscribe(shutdown_rx: Arc<Mutex<Receiver<()>>>) {
 
    info!("Sent subscription request");
 
-    let (write, read) = ws_stream.split();
+    let (mut write, read) = ws_stream.split();
 
     let ws_to_stdout = {
         read.for_each(|message| async {
@@ -82,7 +42,7 @@ pub async fn subscribe(shutdown_rx: Arc<Mutex<Receiver<()>>>) {
             if parsed.is_err() {
                 return;
             }
-            let program_update: Payload = parsed.unwrap();
+            let program_update: crate::models::Payload = parsed.unwrap();
             let account_data = &program_update.params.result.value.account.data[0];
             trace!("Extracted account data: {:?}", account_data);
             let mut decoded_data = &mut base64::decode(account_data).expect("Failed to decode Base64");
@@ -95,16 +55,22 @@ pub async fn subscribe(shutdown_rx: Arc<Mutex<Receiver<()>>>) {
                 let lease = Lease::deserialize(&mut &decoded_data[1..]).expect("Failed to deserialize Lease");
                 info!("{:?}", lease);
             }
+            if decoded_data.first() == Some(&3u8) {
+                let record = Record::deserialize(&mut &decoded_data[1..]).expect("Failed to deserialize Record");
+                let dns_service_sender = &SOLANA_TO_DNS.0.lock().await;
+                let db_service_sender = &SOLANA_TO_DB.0.lock().await;
+                dns_service_sender.send(record.clone()).await.unwrap();
+                db_service_sender.send(record.clone()).await.unwrap();
+                info!("{:?}", record);
+            }
         })
     };
-    ws_to_stdout.await;
-    loop {
-        sleep(std::time::Duration::from_secs(15)).await;
-        //ws_stream.send(Message::Ping(tungstenite::protocol::frame::Payload::Vec(vec![]))).await.unwrap();
-        let mut shutdown_lock = shutdown_rx.lock().await;
-        if shutdown_lock.changed().await.is_ok() {
-            info!("Shutting down Solana websocket subscription...");
-            break;
+    let keepalive_loop = async move {
+        loop {
+            sleep(std::time::Duration::from_secs(15)).await;
+            write.send(Message::Text(String::from("keepalive").into())).await.unwrap();
+            trace!("Sent keepalive ping");
         }
-    }
+    };
+    tokio::join!(keepalive_loop, ws_to_stdout);
 }
